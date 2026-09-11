@@ -1,0 +1,6 @@
+# Copier ce fichier en terraform.tfvars et renseigner vos valeurs.
+# terraform.tfvars ne doit jamais être commité (secrets/valeurs propres à l'environnement).
+
+aws_region         = "eu-west-3"
+budget_alert_email = "vous@exemple.com"
+budget_limit_usd   = 20
