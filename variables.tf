@@ -7,7 +7,7 @@ variable "project_name" {
 variable "aws_region" {
   description = "Région AWS de déploiement (choisissez celle la plus proche de vous)"
   type        = string
-  default     = "eu-west-3"
+  default     = "us-east-1"
 }
 
 variable "budget_limit_usd" {
