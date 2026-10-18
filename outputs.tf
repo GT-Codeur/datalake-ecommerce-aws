@@ -12,6 +12,11 @@ output "glue_database" {
   value       = aws_glue_catalog_database.datalake.name
 }
 
+output "glue_bronze_table" {
+  description = "Nom de la table bronze"
+  value       = aws_glue_catalog_table.orders.name
+}
+
 output "pipeline_role_arn" {
   description = "ARN du rôle IAM en moindre privilège à assumer pour ingérer/interroger les données"
   value       = aws_iam_role.pipeline.arn
