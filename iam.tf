@@ -8,13 +8,13 @@
 # (identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"])
 
 data "aws_iam_policy_document" "assume_role" {
-    statement {
-      actions = ["sts:AssumeRole"]
-      principals {
-        type = "AWS"
-        identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
-      }
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
     }
+  }
 }
 
 # TODO — resource "aws_iam_role" "pipeline" avec cette assume_role_policy.
@@ -22,7 +22,7 @@ data "aws_iam_policy_document" "assume_role" {
 # et interroger les données, plutôt que d'utiliser vos identifiants admin.
 
 resource "aws_iam_role" "pipeline" {
-  name = "pipeline-role"
+  name               = "pipeline-role"
   assume_role_policy = data.aws_iam_policy_document.assume_role.json
 }
 
@@ -74,17 +74,22 @@ data "aws_iam_policy_document" "pipeline" {
       "glue:CreateTable",
       "glue:UpdateTable",
       "glue:DeleteTable"
-     ]
-     resources = [
+    ]
+    resources = [
       "arn:aws:glue:${var.aws_region}:${data.aws_caller_identity.current.account_id}:${local.glue_database}"
-     ]
+    ]
+  }
+  statement {
+    effect    = "Deny"
+    actions   = ["s3:CreateBucket"]
+    resources = ["arn:aws:athena:${var.aws_region}:${data.aws_caller_identity.current.account_id}:workgroup/primary"]
   }
 }
 
 # TODO — resource "aws_iam_role_policy" "pipeline" pour attacher la policy
 # ci-dessus au rôle.
 resource "aws_iam_role_policy" "pipeline" {
-  name = "pipeline-role-policy"
-  role = aws_iam_role.pipeline.id
+  name   = "pipeline-role-policy"
+  role   = aws_iam_role.pipeline.id
   policy = data.aws_iam_policy_document.pipeline.json
 }
