@@ -79,7 +79,7 @@ FROM users;
 CREATE TABLE dim_date
 WITH (
     format              = 'PARQUET',
-    external_location   = 's3://mon-datalake-ecommerce-eef256/gold/dim_date/',
+    external_location   = 's3://mon-datalake-ecommerce-<suffix>/gold/dim_date/',
     write_compression   = 'SNAPPY'
 )
 AS
@@ -97,7 +97,7 @@ CREATE TABLE dim_customers
 WITH (
     format='PARQUET',
     write_compression='SNAPPY',
-    external_location='s3://mon-datalake-ecommerce-eef256/gold/dim_customers/'
+    external_location='s3://mon-datalake-ecommerce-<suffix>/gold/dim_customers/'
 )
 AS
 SELECT customer_id, firstname, lastname, email, city, country, company_name
@@ -109,7 +109,7 @@ CREATE TABLE dim_products
 WITH (
     format='PARQUET',
     write_compression='SNAPPY',
-    external_location='s3://mon-datalake-ecommerce-eef256/gold/dim_products/'
+    external_location='s3://mon-datalake-ecommerce-<suffix>/gold/dim_products/'
 )
 AS
 SELECT product_id, title, category, brand, catalog_price, discounted_price
@@ -120,7 +120,7 @@ SELECT -1, 'Unknown', 'Unknown', 'Unknown', CAST(NULL AS DECIMAL(10,2)), CAST(NU
 CREATE TABLE fact_sales
 WITH (
   format            = 'PARQUET',
-  external_location = 's3://mon-datalake-ecommerce-eef256/gold/fact_sales/',
+  external_location = 's3://mon-datalake-ecommerce-<suffix>/gold/fact_sales/',
   write_compression = 'SNAPPY'
 )
 AS
@@ -128,11 +128,10 @@ SELECT
   o.invoiceno,
   COALESCE(p.product_id, -1) AS product_id,
   COALESCE(u.customer_id, -1) AS customer_id,
-  COALESCE(d.date_id, -1) AS date_id,
+  d.date_id,
   (o.customer_id IS NULL) AS is_guest_order,
   (p.product_id IS NULL) AS product_orphan,
   (o.customer_id IS NOT NULL AND u.customer_id IS NULL) AS customer_orphan,
-  (d.date_id IS NULL) AS date_orphan,
   o.invoice_date,
   o.country,
   o.is_return,
