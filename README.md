@@ -4,8 +4,6 @@ Pipeline de données en architecture **médaillon (bronze → silver → gold)**
 
 À partir de trois fichiers sources (commandes, produits, clients), le projet produit un modèle en étoile prêt pour l'analyse : chiffre d'affaires par pays, par période, analyse des clés orphelines, etc.
 
-> Le détail des schémas est dans [`architecture.md`](architecture.md).
-
 ---
 
 ## Sommaire
@@ -21,7 +19,6 @@ Pipeline de données en architecture **médaillon (bronze → silver → gold)**
 9. [Questions métier](#9-questions-métier)
 10. [Déploiement et exécution](#10-déploiement-et-exécution)
 11. [Choix de conception](#11-choix-de-conception)
-12. [Limites connues et pistes d'amélioration](#12-limites-connues-et-pistes-damélioration)
 
 ---
 
@@ -167,7 +164,7 @@ LEFT JOIN dim_date       d ON CAST(o.invoice_date AS DATE) = d.full_date
 
 Des indicateurs conservent la cause : `product_orphan`, `customer_orphan`, `date_orphan`, `is_guest_order` (client absent de la commande, c'est-à-dire un achat sans identifiant client).
 
-**Pourquoi ne pas exclure ?** Ce sont de vraies ventes : les exclure rendrait le CA de gold inférieur à celui de silver. Le rattachement à `-1` garde les totaux réconciliés et permet de quantifier le problème.
+**Pourquoi ne pas exclure ?** Ce sont de vraies ventes : les exclure rendrait le chiffre d'affaire de gold inférieur à celui de silver. Le rattachement à `-1` garde les totaux réconciliés et permet de quantifier le problème.
 
 ---
 
@@ -212,11 +209,9 @@ SELECT
 FROM fact_sales;
 ```
 
-Traitement : ces lignes sont **rattachées à la clé « inconnu » (`-1`)**, ni exclues ni isolées dans une table séparée.
-
 ### Chiffre d'affaires total et par pays sur les 3 derniers mois
 
-Les données couvrent du 14/04/2026 au 13/07/2026. La fenêtre est donc calculée **à partir de la date la plus récente des données**, et non de la date du jour (une fenêtre basée sur `CURRENT_DATE` serait vide).
+Les données couvrent du 14/04/2026 au 13/07/2026. La fenêtre est donc calculée **à partir de la date la plus récente des données**.
 
 ```sql
 WITH bornes AS (
@@ -224,19 +219,13 @@ WITH bornes AS (
 )
 SELECT
   COALESCE(f.order_country, 'TOTAL')                          AS pays,
-  ROUND(SUM(f.line_amount), 2)                                AS ca_net,
-  ROUND(SUM(f.line_amount) FILTER (WHERE NOT f.is_return), 2) AS ca_brut,
-  ROUND(SUM(f.line_amount) FILTER (WHERE f.is_return), 2)     AS retours
+  ROUND(SUM(f.line_amount) FILTER (WHERE NOT f.is_return), 2) AS CA
 FROM fact_sales f
 CROSS JOIN bornes b
 WHERE CAST(f.invoice_date AS DATE) > date_add('month', -3, b.date_max)
 GROUP BY ROLLUP (f.order_country)
 ORDER BY ca_net DESC;
 ```
-
-- **CA net** : toutes les lignes, retours inclus (valeurs négatives).
-- **CA brut** : hors retours.
-- La ligne `TOTAL` est le total général (`ROLLUP`).
 
 ---
 
@@ -305,32 +294,26 @@ Un CTAS échoue si la table existe ou si son emplacement S3 n'est pas vide :
 2. Vider le préfixe S3 correspondant (`aws s3 rm s3://<bucket>/<préfixe>/ --recursive`)
 3. Relancer le `CREATE TABLE ... AS SELECT`
 
-Athena n'accepte qu'**une instruction par exécution** : `DROP TABLE` et `CREATE TABLE` se lancent séparément. Une requête CTAS en échec laisse des fichiers temporaires sous `athena-results/Unsaved/`, qui peuvent être supprimés.
-
-### Structure recommandée du dépôt
-
-```
-.
-├── README.md
-├── architecture.md
-├── terraform/
-│   ├── main.tf          # bucket, préfixes, base Glue, tables bronze, workgroup
-│   └── variables.tf
-└── sql/
-    ├── 01_silver_users.sql
-    ├── 02_silver_products.sql
-    ├── 03_silver_orders.sql
-    ├── 04_gold_dim_products.sql
-    ├── 05_gold_dim_customers.sql
-    ├── 06_gold_dim_date.sql
-    ├── 07_gold_fact_sales.sql
-    └── 99_controles.sql
-```
-
 ---
 
 ## 11. Choix de conception
-
+ Après analyse des sources de données, j'ai décidé de procéder de la manière suivante pour la creation du modèle en étoile.
+### Comparatif des trois couches
+ 
+| | **Bronze** | **Silver** | **Gold** |
+|---|---|---|---|
+| **Définition** | Données brutes, non traitées, telles que reçues des sources | Données nettoyées et standardisées | Données prêtes pour le métier (modèle en étoile) |
+| **Objectif** | Traçabilité et débogage | Couche intermédiaire : préparer les données pour l'analyse | Fournir des données à consommer pour le reporting et l'analyse |
+| **Type d'objet** | Tables externes Glue (CSV, JSON Lines) | Tables Glue sur fichiers Parquet (créées par CTAS) | Tables Glue sur fichiers Parquet (créées par CTAS) |
+| **Méthode de chargement** | Chargement complet : dépôt des fichiers sources dans S3 (`aws s3 cp`) | Chargement complet : `DROP TABLE`, vidage du préfixe S3, puis `CREATE TABLE AS SELECT` (équivalent de Truncate & Insert) | Chargement complet, même méthode ; ordre : dimensions, puis `fact_sales` |
+| **Transformation des données** | Aucune (as-is) | - **Nettoyage** : `TRY_CAST`, exclusion des lignes sans quantité ou sans date valides<br>- **Standardisation** : pays (variantes, fautes, noms français ramenés à des noms anglais)<br>- **Normalisation** : typage strict, aplatissement des objets imbriqués<br>- **Colonnes dérivées** : `line_amount`, `is_return`, `discounted_price`<br>- **Enrichissement** : aucun (les jointures entre sources se font en gold) | - **Intégration** : jointures commandes, produits, clients et dates<br>- **Agrégation** : indicateurs (CA par pays et par période)<br>- **Règles métier** : CA net et brut, retours, clé « inconnu » (produit, client), commandes invité |
+| **Format et stockage** | CSV et JSON Lines, préfixe `bronze/` | Parquet + Snappy, préfixe `silver/` | Parquet + Snappy, préfixe `gold/` |
+| **Schéma** | Colonnes d'`orders` en `string` ; structures imbriquées conservées (`struct`, `array`) | Types stricts (`BIGINT`, `INT`, `DECIMAL`, `TIMESTAMP`) ; structures aplaties | Faits et dimensions reliés par `product_id`, `customer_id` et `date_key` |
+| **Tables du projet** | `orders`, `products`, `users` | `orders_clean`, `products_clean`, `users_clean` | `fact_sales`, `dim_products`, `dim_customers`, `dim_date` |
+| **Contrôles de qualité** | Comptage des lignes après dépôt | Valeurs invalides converties en `NULL` ou exclues ; comptage bronze / silver | Réconciliation des totaux silver / gold ; unicité des clés de dimension ; aucune ligne sans date |
+ 
+### Décisions détaillées
+ 
 - **Médaillon en trois couches** : le bronze garde la source rejouable ; le silver porte les règles de qualité ; le gold porte le modèle métier.
 - **Bronze en `string`** : le typage strict est repoussé en silver, où `TRY_CAST` permet de gérer les valeurs invalides au lieu de faire échouer la lecture.
 - **Parquet + Snappy** en silver et gold : format colonnaire compressé.
@@ -339,16 +322,3 @@ Athena n'accepte qu'**une instruction par exécution** : `DROP TABLE` et `CREATE
 - **`invoiceno` en texte et `is_return`** : les annulations (`C…`) sont des données valides, pas des erreurs.
 - **Deux prix distincts** (`unit_price` de la commande, `catalog_price` du catalogue) : ils ne sont pas comparables dans ces données.
 - **SQL séparé de Terraform** : Terraform n'a pas de ressource « exécuter une requête Athena » ; il déploie l'infrastructure, les transformations restent des scripts SQL versionnés.
-
----
-
-## 12. Limites connues et pistes d'amélioration
-
-- **Prix négatifs.** Les 29 lignes à prix négatif ne sont pas exclues de `orders_clean` ; elles réduisent le CA comme un remboursement alors que leur facture n'est pas une annulation. Piste : les mettre en quarantaine dans une table `orders_rejected` avec un motif (`negative_unit_price`).
-- **Doublons.** La requête silver décrite ci-dessus n'applique pas de déduplication. Les doublons exacts peuvent être supprimés sans risque ; une même ligne de facture avec des prix différents doit être signalée ou mise en quarantaine plutôt que tranchée automatiquement.
-- **Table de rejets.** Les lignes exclues de silver ne sont pas conservées. Piste : `orders_rejected` avec une colonne `reject_reason`, pour justifier l'écart bronze/silver.
-- **Écart bronze / silver.** Appliquées au fichier source, les trois règles d'exclusion écartent 181 lignes (soit 7 775 conservées), alors que `orders_clean` en compte 7 463. Les 312 lignes d'écart doivent être expliquées (une règle supplémentaire ou une déduplication dans la requête réellement exécutée) avant de figer les chiffres du rapport.
-- **Dates par facture.** Une facture peut porter plusieurs dates : les indicateurs « nombre de commandes par jour » comptent la même facture plusieurs fois.
-- **Orchestration.** Pas de planification : les requêtes sont lancées à la main. Pour un chargement récurrent, passer à `INSERT INTO` et utiliser un ordonnanceur externe.
-- **Étendue de `dim_date`.** Limitée à l'année 2026 ; à élargir si les données dépassent cette période.
-- **Données personnelles.** `email` est présent en silver mais exclu du modèle gold, qui n'en a pas besoin pour l'analyse des ventes.
